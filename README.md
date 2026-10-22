@@ -1,38 +1,65 @@
 # prior-strength-interp
 
-**Does telling a language model the wrong answer make it less confident in the right one — and can we find where that happens inside the network?**
+If you tell a language model the wrong answer, does it become less sure of the right one? And if so, where inside the network does that happen?
 
-This project measures how prior strength (sycophantic framing) affects Qwen2.5-1.5B's confidence across layers, using a logit lens and causal activation patching.
+This project tests that question on **Qwen2.5-1.5B**.
 
 <!-- TODO: add "Open in Colab" badge once the notebook is in the repo -->
 
-## What it does
+## Key finding
 
-- **100 factual questions**, each with a correct and an incorrect answer
-- **Five prompt variants per question:** `neutral`, `mention`, `weak`, `strong`, `expert` (each suggesting the wrong answer with increasing confidence)
-- **Logit lens:** project hidden states at every layer through the model's norm + LM head to track P(right answer) across depth
-- **Filter** to questions the model answers correctly under neutral framing (63/100)
-- **Causal test:** compute the "strong minus neutral" direction in residual stream space, subtract it at layers 22–27 via forward hooks, and compare against a random vector of equal norm
+Suggesting a wrong answer made the model less confident in the right answer, every time. The drop shows up in the middle layers too, not just at the end. So the model's internal picture shifts early, well before it produces an answer.
+
+## How it works
+
+**1. Build the questions.**
+We use 100 factual questions. Each one has a correct answer and a plausible wrong answer.
+
+**2. Add pressure.**
+Each question is asked five ways. Four of them push the wrong answer, each a little harder than the last:
+
+| Variant | What the prompt does |
+|---------|----------------------|
+| neutral | Just asks the question |
+| mention | Mentions the wrong answer |
+| weak    | Gently suggests the wrong answer |
+| strong  | Firmly claims the wrong answer |
+| expert  | Says an expert gave the wrong answer |
+
+**3. Look inside each layer.**
+At every layer, we take the model's hidden state and decode it as if it were the final output. This is called a *logit lens*. It lets us track how likely the right answer is at each step through the network.
+
+**4. Keep only fair questions.**
+We drop any question the model gets wrong even without pressure. That leaves 63 of the 100.
+
+**5. Test cause, not just correlation.**
+We find the direction in the model's activations that separates "strong" prompts from "neutral" ones. Then we subtract that direction at layers 22 to 27 and see what changes. As a control, we also subtract a random direction of the same size.
 
 ## Results
 
-| Condition | P(right answer) at final layer |
-|-----------|-------------------------------:|
+Probability the model gives the right answer, measured at the final layer:
+
+| Condition | P(right answer) |
+|-----------|----------------:|
 | neutral   | 0.175 |
 | expert    | 0.126 |
 | strong    | 0.078 |
 | mention   | 0.074 |
 | weak      | 0.048 |
 
-All biased conditions suppressed model confidence in the correct answer. The effect is present even at the logit-lens level across intermediate layers, suggesting the prior influences representations well before the final layer.
+Every form of pressure lowered the model's confidence in the correct answer.
 
-## Model
+## Setup
 
-[`Qwen/Qwen2.5-1.5B`](https://huggingface.co/Qwen/Qwen2.5-1.5B) · float16 · T4 GPU (Google Colab)
+| | |
+|---|---|
+| Model | [Qwen/Qwen2.5-1.5B](https://huggingface.co/Qwen/Qwen2.5-1.5B) |
+| Precision | float16 |
+| Hardware | T4 GPU on Google Colab |
 
 ## Limitations
 
-- Small model (1.5B) — results may not generalize to larger models
-- 63 questions is a modest sample
-- Logit lens is an approximation; intermediate layers weren't trained to be decoded this way
-- Causal subtraction is crude — a more principled approach would use DAS or activation patching per component
+* **Small model.** At 1.5B parameters, results may not carry over to larger models.
+* **Small sample.** 63 questions is enough to see a trend, but not a lot.
+* **The logit lens is approximate.** Middle layers were never trained to be read out directly, so their numbers are rough.
+* **The causal test is blunt.** Subtracting one direction is a coarse tool. Methods like DAS, or patching individual components, would give sharper answers.
